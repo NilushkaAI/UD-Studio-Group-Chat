@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced WebSocket Chat Messenger</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        /* FULL SCREEN UI CHANGES */
+        body {
+            /* Remove default body centering/padding */
+            display: block; 
+            padding: 0;
+            margin: 0;
+        }
+
+        /* Set the main chat window to full viewport height */
+        #chat-window {
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Custom scrollbar style for the message area */
+        #messages::-webkit-scrollbar {
+            width: 8px;
+        }
+        #messages::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen"> 
+    
+    <div id="auth-prompt" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h2 id="auth-title" class="text-2xl font-bold text-indigo-600 mb-4">Login to Chat</h2>
+            <p id="auth-status-message" class="mb-4 text-sm text-center text-red-500"></p>
+
+            <form id="login-form" class="space-y-4">
+                <input type="text" id="login-username" placeholder="Username" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" required />
+                <input type="password" id="login-password" placeholder="Password" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" required />
+                <button type="submit" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 shadow-md">
+                    Login
+                </button>
+                <p class="text-center text-sm text-gray-600">
+                    Don't have an account? <a href="#" id="switch-to-register" class="text-indigo-600 font-semibold hover:underline">Register here</a>
+                </p>
+            </form>
+
+            <form id="register-form" class="space-y-4 hidden">
+                <input type="text" id="register-username" placeholder="Username" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" maxlength="15" required />
+                <input type="email" id="register-email" placeholder="Email" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" required />
+                <input type="password" id="register-password" placeholder="Password" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150" minlength="6" required />
+                <button type="submit" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold hover:bg-green-700 transition duration-150 shadow-md">
+                    Register
+                </button>
+                <p class="text-center text-sm text-gray-600">
+                    Already have an account? <a href="#" id="switch-to-login" class="text-indigo-600 font-semibold hover:underline">Login here</a>
+                </p>
+            </form>
+            
+        </div>
+    </div>
+    
+    <div id="chat-window" class="w-full h-screen bg-white shadow-2xl flex flex-col hidden">
+        
+        <header class="p-4 bg-indigo-600 text-white shadow-lg flex justify-between items-center">
+            <h1 class="text-xl font-bold">UD Studio Group Chat</h1>
+            <p class="text-sm opacity-80" id="current-user-info"></p>
+        </header>
+
+        <main id="messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+            <div class="text-center text-gray-500 pt-8">
+                <svg class="w-6 h-6 inline-block mr-2 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9 9 0 01-9-8c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                Group chat history starts here.
+            </div>
+        </main>
+        
+        <div id="typing-indicator" class="p-2 text-sm text-gray-500 bg-white border-t border-gray-200 h-8 flex items-center overflow-hidden">
+        </div>
+
+        <div class="p-4 border-t border-gray-200">
+            <form id="chat-form" class="flex gap-2">
+                <input
+                    type="text"
+                    id="message-input"
+                    placeholder="Type your message..."
+                    class="flex-1 p-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-150"
+                    required
+                />
+                <button
+                    type="submit"
+                    id="send-button"
+                    class="bg-indigo-600 text-white p-3 rounded-full hover:bg-indigo-700 transition duration-150 shadow-md flex items-center justify-center"
+                >
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- Global Variables ---
+        const AUTH_URL = 'http://localhost:8080'; 
+        let USER_NAME = null; 
+        const USER_COLOR = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+        
+        let typingTimeout = null;
+        let isTyping = false;
+        const typingUsers = new Set(); 
+        
+        // --- DOM Elements ---
+        const MESSAGE_BOX = document.getElementById('messages');
+        const MESSAGE_INPUT = document.getElementById('message-input');
+        const CHAT_FORM = document.getElementById('chat-form');
+        const CHAT_WINDOW = document.getElementById('chat-window');
+        const TYPING_INDICATOR = document.getElementById('typing-indicator');
+        const CURRENT_USER_INFO = document.getElementById('current-user-info');
+        
+        // AUTH ELEMENTS
+        const AUTH_PROMPT = document.getElementById('auth-prompt');
+        const AUTH_TITLE = document.getElementById('auth-title');
+        const AUTH_STATUS_MESSAGE = document.getElementById('auth-status-message');
+
+        const LOGIN_FORM = document.getElementById('login-form');
+        const REGISTER_FORM = document.getElementById('register-form');
+        const SWITCH_TO_REGISTER = document.getElementById('switch-to-register');
+        const SWITCH_TO_LOGIN = document.getElementById('switch-to-login');
+        
+        let ws; 
+
+        // --- Utility Functions ---
+        
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        function linkify(text) {
+            const urlRegex = /(\b(https?|ftp|file):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+            return text.replace(urlRegex, function(url) {
+                return `<a href="${url}" target="_blank" class="text-blue-600 underline hover:text-blue-800 transition duration-150">${url}</a>`;
+            });
+        }
+        
+        function scrollToBottom() {
+            MESSAGE_BOX.scrollTop = MESSAGE_BOX.scrollHeight;
+        }
+
+        function displayMessage(username, text, senderColor, timestamp, isSelf = false) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.classList.add('flex', 'items-end', isSelf ? 'justify-end' : 'justify-start');
+
+            const messageContentContainer = document.createElement('div');
+            messageContentContainer.classList.add('flex', 'flex-col', isSelf ? 'items-end' : 'items-start');
+
+            const messageBubble = document.createElement('div');
+            messageBubble.classList.add(
+                'max-w-xs', 
+                'md:max-w-md', 
+                'px-4', 
+                'py-2', 
+                'rounded-xl', 
+                'shadow-sm',
+                'break-words', 
+                'text-base',
+                isSelf ? 'bg-indigo-500' : 'bg-gray-200',
+                isSelf ? 'text-white' : 'text-gray-800'
+            );
+            
+            if (!isSelf && username !== 'System') {
+                const nameLabel = document.createElement('span');
+                nameLabel.classList.add('text-xs', 'font-semibold', 'block', 'mb-1', 'px-2');
+                nameLabel.style.color = senderColor;
+                nameLabel.textContent = username;
+                messageContentContainer.appendChild(nameLabel);
+            }
+            
+            messageBubble.innerHTML = linkify(text);
+            messageContentContainer.appendChild(messageBubble);
+
+            const timeSpan = document.createElement('span');
+            timeSpan.classList.add('text-xs', 'mt-1', isSelf ? 'mr-1' : 'ml-1', isSelf ? 'text-gray-500' : 'text-gray-400');
+            timeSpan.textContent = formatTime(timestamp);
+            messageContentContainer.appendChild(timeSpan);
+
+
+            messageWrapper.appendChild(messageContentContainer);
+            MESSAGE_BOX.appendChild(messageWrapper);
+        }
+        
+        function sendTypingStatus(isTypingNow) {
+            if (ws && ws.readyState === WebSocket.OPEN && USER_NAME) {
+                const typingObject = {
+                    type: 'typing',
+                    username: USER_NAME,
+                    senderColor: USER_COLOR,
+                    isTyping: isTypingNow
+                };
+                ws.send(JSON.stringify(typingObject));
+                isTyping = isTypingNow;
+            }
+        }
+        
+        function updateTypingIndicator() {
+            typingUsers.delete(USER_NAME);
+
+            const names = Array.from(typingUsers);
+            
+            if (names.length === 0) {
+                TYPING_INDICATOR.textContent = '';
+                TYPING_INDICATOR.classList.add('h-8');
+            } else if (names.length === 1) {
+                TYPING_INDICATOR.innerHTML = `<span class="font-semibold">${names[0]}</span> is typing...`;
+                TYPING_INDICATOR.classList.remove('h-8');
+            } else {
+                TYPING_INDICATOR.innerHTML = `<span class="font-semibold">${names.length} people</span> are typing...`;
+                TYPING_INDICATOR.classList.remove('h-8');
+            }
+        }
+        
+        // --- Authentication Functions ---
+
+        function setAuthStatus(message, isError = false) {
+            AUTH_STATUS_MESSAGE.textContent = message;
+            if (isError) {
+                AUTH_STATUS_MESSAGE.classList.remove('text-green-500');
+                AUTH_STATUS_MESSAGE.classList.add('text-red-500');
+            } else {
+                AUTH_STATUS_MESSAGE.classList.remove('text-red-500');
+                AUTH_STATUS_MESSAGE.classList.add('text-green-500');
+            }
+        }
+        
+        function switchToForm(formType) {
+            setAuthStatus(''); 
+            if (formType === 'login') {
+                AUTH_TITLE.textContent = 'Login to Chat';
+                LOGIN_FORM.classList.remove('hidden');
+                REGISTER_FORM.classList.add('hidden');
+                document.getElementById('login-username').focus();
+            } else {
+                AUTH_TITLE.textContent = 'Register New Account';
+                LOGIN_FORM.classList.add('hidden');
+                REGISTER_FORM.classList.remove('hidden');
+                document.getElementById('register-username').focus();
+            }
+        }
+
+        REGISTER_FORM.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            setAuthStatus('Registering...', false);
+
+            const username = document.getElementById('register-username').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+
+            try {
+                const response = await fetch(`${AUTH_URL}/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    setAuthStatus(data.message, false);
+                    REGISTER_FORM.reset(); 
+                    setTimeout(() => switchToForm('login'), 2000); 
+                } else {
+                    setAuthStatus(data.message, true);
+                }
+            } catch (error) {
+                console.error('Registration failed:', error);
+                setAuthStatus('Could not connect to the server for registration.', true);
+            }
+        });
+
+        LOGIN_FORM.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            setAuthStatus('Logging in...', false);
+
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            try {
+                const response = await fetch(`${AUTH_URL}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    USER_NAME = data.username; 
+                    
+                    AUTH_PROMPT.classList.add('hidden');
+                    CHAT_WINDOW.classList.remove('hidden');
+                    CHAT_WINDOW.classList.add('flex'); 
+
+                    CURRENT_USER_INFO.textContent = `You are: ${USER_NAME}`;
+                    
+                    initializeWebSocket();
+
+                    MESSAGE_INPUT.focus();
+
+                } else {
+                    setAuthStatus(data.message || 'Login failed.', true);
+                }
+            } catch (error) {
+                console.error('Login failed:', error);
+                setAuthStatus('Could not connect to the server for login.', true);
+            }
+        });
+
+        SWITCH_TO_REGISTER.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchToForm('register');
+        });
+
+        SWITCH_TO_LOGIN.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchToForm('login');
+        });
+
+
+        // --- WebSocket Initialization ---
+        function initializeWebSocket() {
+            ws = new WebSocket('ws://localhost:8080');
+
+            ws.onopen = () => {
+                console.log('Successfully connected to the WebSocket server.');
+                displayMessage('System', `Connection established. Welcome, ${USER_NAME}! Start chatting!`, 'indigo', Date.now(), false);
+                scrollToBottom(); 
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const messageData = JSON.parse(event.data);
+                    
+                    if (messageData.text && messageData.type !== 'typing') { 
+                        
+                        const isSelf = messageData.senderColor === USER_COLOR;
+                        
+                        if (messageData.text.trim() !== "") {
+                            displayMessage(
+                                messageData.username, 
+                                messageData.text, 
+                                messageData.senderColor, 
+                                messageData.timestamp, 
+                                isSelf
+                            );
+                            scrollToBottom(); 
+                        }
+                        
+                        typingUsers.delete(messageData.username);
+                        updateTypingIndicator();
+
+                    } else if (messageData.type === 'typing') {
+                        if (messageData.username !== USER_NAME) { 
+                            if (messageData.isTyping) {
+                                typingUsers.add(messageData.username);
+                            } else {
+                                typingUsers.delete(messageData.username);
+                            }
+                            updateTypingIndicator();
+                        }
+                    }
+
+                } catch (e) {
+                    console.error("Could not parse incoming message:", e);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                displayMessage('System', 'Server connection error. Is the server running?', 'red', Date.now(), false);
+            };
+
+            ws.onclose = () => {
+                console.log('Connection closed.');
+                displayMessage('System', 'Disconnected from the chat room.', 'red', Date.now(), false);
+            };
+
+            MESSAGE_INPUT.addEventListener('input', () => {
+                if (!isTyping) {
+                    sendTypingStatus(true);
+                }
+
+                clearTimeout(typingTimeout);
+                
+                typingTimeout = setTimeout(() => {
+                    sendTypingStatus(false);
+                }, 1000);
+            });
+
+
+            CHAT_FORM.addEventListener('submit', (e) => {
+                e.preventDefault(); 
+                
+                const message = MESSAGE_INPUT.value.trim();
+
+                if (message && ws.readyState === WebSocket.OPEN) {
+                    sendTypingStatus(false);
+                    
+                    // The core message object structure
+                    const messageObject = {
+                        type: 'chat',
+                        username: USER_NAME,
+                        text: message,
+                        senderColor: USER_COLOR, 
+                        timestamp: Date.now(),
+                        // IMPORTANT: For future DM functionality, you would add a 'recipient' field here
+                        // recipient: null 
+                    };
+                    
+                    ws.send(JSON.stringify(messageObject));
+                    
+                    MESSAGE_INPUT.value = '';
+                }
+            });
+        }
+        
+        // Initialize on the login screen
+        switchToForm('login');
+    </script>
+</body>
+</html>
